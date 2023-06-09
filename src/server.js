@@ -6,8 +6,6 @@ import dotenv from "dotenv";
 // Load environment variables from .env file
 dotenv.config();
 
-const PORT = 8000;
-
 const app = express();
 
 app.use(express.json());
@@ -760,7 +758,10 @@ app.get("/generate-e2e-tests-from-code", async (req, res) => {
   }
 });
 
-// Start the server and listen for incoming requests
-app.listen(PORT, () => {
-  console.log(`Server is listening on port ${PORT}`);
+const port = process.env.PORT || 8000;
+
+app.listen(port, () => {
+  console.log(`Server is listening on port ${port}`);
 });
+
+// Start the server and listen for incoming requests
