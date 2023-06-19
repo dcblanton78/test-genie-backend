@@ -3,21 +3,30 @@ import cors from "cors";
 import axios from "axios";
 import dotenv from "dotenv";
 
+import passport from "passport";
+import { Strategy as GoogleStrategy } from "passport-google-oauth20";
+
 // Load environment variables from .env file
 dotenv.config();
 
+const PORT = 8000;
+
 const app = express();
 
-app.use(express.json());
+app.use(
+  cors({
+    origin: ["http://localhost:3000", "https://test-genie.com"],
+    credentials: true,
+  })
+);
 
-// Enable cross-origin resource sharing
-app.use(cors());
+app.use(express.json());
 
 import db from "./db.js"; // Import db from database.js
+import { compareBuild } from "semver";
 
 app.use(express.json());
-
-// rest of your code...
+// Initialize Passport
 
 // Define a route that saves test cases to the MySQL database
 app.post("/store-test-cases", async (req, res) => {
@@ -71,6 +80,8 @@ app.get("/get-test-cases", async (req, res) => {
 
 app.get("/generate-test-cases", async (req, res) => {
   const API_KEY = process.env.REACT_APP_OPENAI_API_KEY;
+  console.log("Req.query: ", req.query);
+  const isCypressTest = req.query["x-cypress-test"] === "true";
 
   // Get the requirements parameter from the query string
   const requirements = req.query.requirements;
@@ -86,7 +97,7 @@ app.get("/generate-test-cases", async (req, res) => {
     // additional test cases...
   ];
 
-  if (process.env.MOCK_TEST_DATA === "true") {
+  if (process.env.MOCK_TEST_DATA === "true" || isCypressTest) {
     return res.status(200).json(MOCK_TEST_CASES);
   }
 
@@ -120,8 +131,17 @@ app.get("/generate-test-cases", async (req, res) => {
     );
 
     // Extract the generated test cases from the API response
+    console.log("response.data: ", response.data);
     const generatedTestCases = response.data.choices[0].text;
-    const parsedTestCases = JSON.parse(generatedTestCases).testCases;
+
+    // Find the position of the first '{' character in the string
+    const jsonStart = generatedTestCases.indexOf("{");
+
+    // Slice the string from the first '{' character
+    const jsonContent = generatedTestCases.slice(jsonStart);
+
+    // Parse the JSON content
+    const parsedTestCases = JSON.parse(jsonContent).testCases;
 
     // Send the parsed test cases as a JSON response to the client
     res.json(parsedTestCases);
@@ -134,6 +154,8 @@ app.get("/generate-test-cases", async (req, res) => {
 // Define a route that generates unit tests based on user-provided requirements
 app.get("/generate-unit-tests", async (req, res) => {
   const API_KEY = process.env.REACT_APP_OPENAI_API_KEY;
+  const isCypressTest = req.query["x-cypress-test"] === "true";
+  console.log("Req.Headers: ", req.headers);
 
   // Get the requirements parameter from the query string
   const requirements = req.query.requirements;
@@ -162,7 +184,8 @@ app.get("/generate-unit-tests", async (req, res) => {
     });
     `;
 
-  if (process.env.MOCK_TEST_DATA === "true") {
+  console.log("isCypressTest: ", isCypressTest);
+  if (process.env.MOCK_TEST_DATA === "true" || isCypressTest) {
     return res.status(200).json(MOCK_UNIT_TESTS);
   }
 
@@ -224,6 +247,7 @@ app.get("/generate-unit-tests", async (req, res) => {
 
 app.get("/generate-integration-tests", async (req, res) => {
   const API_KEY = process.env.REACT_APP_OPENAI_API_KEY;
+  const isCypressTest = req.query["x-cypress-test"] === "true";
 
   // Get the requirements parameter from the query string
   const requirements = req.query.requirements;
@@ -250,7 +274,7 @@ app.get("/generate-integration-tests", async (req, res) => {
     });
     `;
 
-  if (process.env.MOCK_TEST_DATA === "true") {
+  if (process.env.MOCK_TEST_DATA === "true" || isCypressTest) {
     return res.status(200).json(MOCK_INTEGRATION_TESTS);
   }
 
@@ -296,6 +320,7 @@ app.get("/generate-integration-tests", async (req, res) => {
 app.get("/generate-e2e-tests", async (req, res) => {
   const API_KEY = process.env.REACT_APP_OPENAI_API_KEY;
   const requirements = req.query.requirements;
+  const isCypressTest = req.query["x-cypress-test"] === "true";
 
   const MOCK_E2E_TESTS = `
 
@@ -321,7 +346,7 @@ app.get("/generate-e2e-tests", async (req, res) => {
     });
     `;
 
-  if (process.env.MOCK_TEST_DATA === "true") {
+  if (process.env.MOCK_TEST_DATA === "true" || isCypressTest) {
     return res.status(200).json(MOCK_E2E_TESTS);
   }
 
@@ -408,10 +433,9 @@ app.get("/generate-e2e-tests", async (req, res) => {
 app.get("/generate-test-cases-from-code", async (req, res) => {
   const API_KEY = process.env.REACT_APP_OPENAI_API_KEY;
 
-  console.log("From CODE req.query.code: " + req.query.code);
-
-  // Get the parameter from the query string
-  const codeBlock = req.query.code;
+  // Get the code parameter from the query string
+  const code = req.query.code;
+  console.log("Code!! " + code);
 
   const MOCK_TEST_CASES = [
     {
@@ -428,29 +452,32 @@ app.get("/generate-test-cases-from-code", async (req, res) => {
     return res.status(200).json(MOCK_TEST_CASES);
   }
 
-  // Log the codeBlock to the console (for debugging purposes)
-  //console.log(codeBlock);
+  // Log the requirements to the console (for debugging purposes)
 
   // Create the data object to send to OpenAI's API
   const data = {
     model: "text-davinci-003",
     prompt:
-      'Please provide all possible test cases associated with the following code in Gherkin syntax (Given, When, Then). In addition to happy path, include all negative cases, edge cases, and corner cases. Please include all the following information: Test Case ID, Description, and Expected Result. Provide the answer as a JSON object with a key "testCases" that has a value of an array containing objects with keys for "ID", "Description", and "Expected_Result". ONLY include the Given, When steps in the Description and ONLY the Then step should be included in the Expected Result. Be sure to start with the word Then in the Expected Result. For example, Description: Given I am on the reset password page, Expected Result: When I enter my email address. Then I am sent a link to reset my password. Here is an example of a good json response {' +
-      '  "testCases": [' +
-      "    {" +
-      '      "ID": 1,' +
-      '      "Description": "Given a new instance of handleActualResultChange function",' +
-      '      "Expected_Result": "Then the local testCases variable is updated with the user-supplied value"' +
-      "    }," +
-      "    {" +
-      '      "ID": 2,' +
-      '      "Description": "Given an index that is out of the range of possible values for the testCases array",' +
-      '      "Expected_Result": "Then the local testCases variable is not updated"' +
-      "    }" +
-      "  ]" +
-      "}" +
-      codeBlock,
-
+      `Please provide all possible test cases associated with the following code in Gherkin syntax (Given, When, Then). In addition to happy path, include all negative cases, edge cases, and corner cases. Please include all the following information: Test Case ID, Description, and Expected Result. Provide the answer as a JSON object with keys for 'ID', 'Description', and 'Expected_Result'. ONLY include the Given, When steps in the Description and ONLY the Then step should be included in the Expected Result. Be sure to start with the word Then in the Expected Result. For example, Description: Given I am on the reset password page, Expected Result: When I enter my email address. Then I am sent a link to reset my password: ` +
+      code +
+      `Here is an example of what the response should look like: [
+        {
+            "ID": 1,
+            "Description": "Given I have sent a booking request to a host, When I receive an email or in-app notification",
+            "Expected_Result": "Then I am informed that my booking has been accepted."
+        },
+        {
+            "ID": 2,
+            "Description": "Given I have received an email or in-app notification, When I open the app or log into the website",
+            "Expected_Result": "Then I can see the booking confirmation in my dashboard."
+        },
+        {
+            "ID": 3,
+            "Description": "Given I can see the booking confirmation in my dashboard, When I click on the booking confirmation",
+            "Expected_Result": "Then I am taken to a page containing more detailed information about the booking."
+        }
+       
+    ]`,
     max_tokens: 1500,
     temperature: 0.4,
   };
@@ -472,24 +499,25 @@ app.get("/generate-test-cases-from-code", async (req, res) => {
     );
 
     // Extract the generated test cases from the API response
-    const generatedTestCases = response.data.choices[0].text;
-    console.log("generatedTestCases: " + generatedTestCases);
-    const parsedTestCases = JSON.parse(generatedTestCases).testCases;
+    const generatedTestCases = response.data.choices[0].text.trim();
+    console.log("Generated Test Cases: " + generatedTestCases);
+    const parsedTestCases = JSON.parse(generatedTestCases);
+    console.log("Parsed Test Cases: " + JSON.stringify(parsedTestCases));
 
     // Send the parsed test cases as a JSON response to the client
     res.json(parsedTestCases);
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: "Internal server error" });
+    res.status(500).json({ error: error.message });
   }
 });
 
-// Define a route that generates unit tests based on user-provided codeBlock
+// Define a route that generates unit tests based on user-provided requirements
 app.get("/generate-unit-tests-from-code", async (req, res) => {
   const API_KEY = process.env.REACT_APP_OPENAI_API_KEY;
 
-  // Get the codeBlock parameter from the query string
-  const codeBlock = req.query.code;
+  // Get the requirements parameter from the query string
+  const code = req.query.code;
 
   const MOCK_UNIT_TESTS = `
 
@@ -524,7 +552,7 @@ app.get("/generate-unit-tests-from-code", async (req, res) => {
     model: "text-davinci-003",
     prompt:
       "Please provide the jest unit tests to test the following code: " +
-      codeBlock +
+      code +
       ". The response should be formatted like this example: \n\n" +
       "describe('View Listing Details', () => {\n" +
       "  const mockListing = {\n" +
@@ -578,8 +606,8 @@ app.get("/generate-unit-tests-from-code", async (req, res) => {
 app.get("/generate-integration-tests-from-code", async (req, res) => {
   const API_KEY = process.env.REACT_APP_OPENAI_API_KEY;
 
-  // Get the codeBlock parameter from the query string
-  const codeBlock = req.query.code;
+  // Get the requirements parameter from the query string
+  const code = req.query.code;
 
   const MOCK_INTEGRATION_TESTS = `
     describe('TEST!!! View Listing Details', () => {
@@ -612,7 +640,7 @@ app.get("/generate-integration-tests-from-code", async (req, res) => {
     model: "text-davinci-003",
     prompt:
       "Please provide the jest integration (not unit!) tests to test the following code: " +
-      codeBlock,
+      code,
     max_tokens: 1500,
     temperature: 0.4,
   };
@@ -648,7 +676,7 @@ app.get("/generate-integration-tests-from-code", async (req, res) => {
 // Create route to handle requests to the /generate-e2e-tests endpoint
 app.get("/generate-e2e-tests-from-code", async (req, res) => {
   const API_KEY = process.env.REACT_APP_OPENAI_API_KEY;
-  const codeBlock = req.query.code;
+  const code = req.query.code;
 
   const MOCK_E2E_TESTS = `
 
@@ -681,7 +709,7 @@ app.get("/generate-e2e-tests-from-code", async (req, res) => {
   // Create the data object to send to OpenAI's API
   const e2eData = {
     model: "text-davinci-003",
-    prompt: `Please provide the Cypress End to End tests to test the following code: ${codeBlock}. Here is an example of what the response should look like: 
+    prompt: `Please provide the Cypress End to End tests to test the following code: ${code}. Here is an example of what the response should look like: 
 
     describe('Listing Search', () => {
       beforeEach(() => {
@@ -758,10 +786,7 @@ app.get("/generate-e2e-tests-from-code", async (req, res) => {
   }
 });
 
-const port = process.env.PORT || 8000;
-
-app.listen(port, () => {
-  console.log(`Server is listening on port ${port}`);
-});
-
 // Start the server and listen for incoming requests
+app.listen(PORT, () => {
+  console.log(`Server is listening on port ${PORT}`);
+});
